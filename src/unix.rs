@@ -4,7 +4,9 @@ pub fn load_native_certs() -> CertificateResult {
     let likely_locations = openssl_probe::probe();
     CertPaths {
         file: likely_locations.cert_file,
-        dir: likely_locations.cert_dir,
+        dir: likely_locations
+            .cert_dir
+            .map(|p| vec![p]),
     }
     .load()
 }

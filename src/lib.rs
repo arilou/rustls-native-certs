@@ -186,17 +186,25 @@ impl CertificateResult {
     }
 }
 
+/// Read `SSL_CERT_DIR`, split it on the platform delimiter (`:` on Unix, `;` on Windows),
+/// and return the entries as `PathBuf`s.
+///
+/// See https://www.openssl.org/docs/man1.0.2/man1/c_rehash.html .
+fn cert_dirs() -> Option<Vec<PathBuf>> {
+    env::var_os(ENV_CERT_DIR).map(|val| env::split_paths(&val).collect())
+}
+
 /// Certificate paths from `SSL_CERT_FILE` and/or `SSL_CERT_DIR`.
 struct CertPaths {
     file: Option<PathBuf>,
-    dir: Option<PathBuf>,
+    dir: Option<Vec<PathBuf>>,
 }
 
 impl CertPaths {
     fn from_env() -> Self {
         Self {
             file: env::var_os(ENV_CERT_FILE).map(PathBuf::from),
-            dir: env::var_os(ENV_CERT_DIR).map(PathBuf::from),
+            dir: cert_dirs(),
         }
     }
 
@@ -215,24 +223,45 @@ impl CertPaths {
     /// subject to the rules outlined above for `self.file`. The directory is not
     /// scanned recursively and may be empty.
     fn load(&self) -> CertificateResult {
-        let mut out = CertificateResult::default();
-        if self.file.is_none() && self.dir.is_none() {
-            return out;
-        }
-
-        if let Some(cert_file) = &self.file {
-            load_pem_certs(cert_file, &mut out);
-        }
-
-        if let Some(cert_dir) = &self.dir {
-            load_pem_certs_from_dir(cert_dir, &mut out);
-        }
-
-        out.certs
-            .sort_unstable_by(|a, b| a.cmp(b));
-        out.certs.dedup();
-        out
+        load_certs_from_paths(self.file.as_deref(), self.dir.as_deref())
     }
+}
+
+/// Load certificates from the given paths.
+///
+/// If both are `None`, returns an empty [`CertificateResult`].
+///
+/// If `file` is `Some`, it is always used, so it must be a path to an existing,
+/// accessible file from which certificates can be loaded successfully. While parsing,
+/// the rustls-pki-types PEM parser will ignore parts of the file which are
+/// not considered part of a certificate. Certificates which are not in the right
+/// format (PEM) or are otherwise corrupted may get ignored silently.
+///
+/// If `dir` is defined, a directory must exist at this path, and all
+/// hash files contained in it must be loaded successfully,
+/// subject to the rules outlined above for `file`. The directory is not
+/// scanned recursively and may be empty.
+pub fn load_certs_from_paths<P: AsRef<Path>>(
+    file: Option<&Path>,
+    dir: Option<&[P]>,
+) -> CertificateResult {
+    let mut out = CertificateResult::default();
+    if file.is_none() && dir.is_none() {
+        return out;
+    }
+
+    if let Some(cert_file) = file {
+        load_pem_certs(cert_file, &mut out);
+    }
+
+    for cert_dir in dir.unwrap_or_default().iter() {
+        load_pem_certs_from_dir(cert_dir.as_ref(), &mut out);
+    }
+
+    out.certs
+        .sort_unstable_by(|a, b| a.cmp(b));
+    out.certs.dedup();
+    out
 }
 
 /// Load certificate from certificate directory (what OpenSSL calls CAdir)
@@ -451,14 +480,14 @@ mod tests {
 
         let result = CertPaths {
             file: None,
-            dir: Some(dir_path.clone()),
+            dir: Some(vec![dir_path.clone()]),
         }
         .load();
         assert_eq!(result.certs.len(), 2);
 
         let result = CertPaths {
             file: Some(file_path),
-            dir: Some(dir_path),
+            dir: Some(vec![dir_path]),
         }
         .load();
         assert_eq!(result.certs.len(), 2);
@@ -512,7 +541,7 @@ mod tests {
 
         test_cert_paths_bad_perms(CertPaths {
             file: None,
-            dir: Some(temp_dir.path().into()),
+            dir: Some(vec![temp_dir.path().into()]),
         })
     }
 

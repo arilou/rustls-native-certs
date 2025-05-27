@@ -17,6 +17,13 @@
 //!     roots.add(cert).unwrap();
 //! }
 //! ```
+//!
+//! # Features
+//!
+//! - `load-any-cert-in-dir`: When enabled, all files in the certificate directory
+//!   (specified by `SSL_CERT_DIR`) will be loaded as certificates, regardless of
+//!   their filename. By default, only files with hash-based filenames (matching
+//!   OpenSSL's c_rehash pattern) are loaded.
 
 // Enable documentation for all features on docs.rs
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
@@ -271,6 +278,9 @@ pub fn load_certs_from_paths<P: AsRef<Path>>(
 /// isn't a valid certificate, we limit ourselves to loading those files
 /// that have a hash-based file name matching the pattern used by OpenSSL.
 /// The hash is not verified, however.
+///
+/// When the "load-any-cert-in-dir" feature is enabled, all files in the
+/// directory are loaded regardless of their filename.
 fn load_pem_certs_from_dir(dir: &Path, out: &mut CertificateResult) {
     let dir_reader = match fs::read_dir(dir) {
         Ok(reader) => reader,
@@ -290,12 +300,6 @@ fn load_pem_certs_from_dir(dir: &Path, out: &mut CertificateResult) {
         };
 
         let path = entry.path();
-        let file_name = path
-            .file_name()
-            // We are looping over directory entries. Directory entries
-            // always have a name (except "." and ".." which the iterator
-            // never yields).
-            .expect("dir entry with no name");
 
         // `openssl rehash` used to create this directory uses symlinks. So,
         // make sure we resolve them.
@@ -311,7 +315,20 @@ fn load_pem_certs_from_dir(dir: &Path, out: &mut CertificateResult) {
             }
         };
 
-        if metadata.is_file() && is_hash_file_name(file_name) {
+        if metadata.is_file() {
+            #[cfg(not(feature = "load-any-cert-in-dir"))]
+            {
+                let file_name = path
+                    .file_name()
+                    // We are looping over directory entries. Directory entries
+                    // always have a name (except "." and ".." which the iterator
+                    // never yields).
+                    .expect("dir entry with no name");
+                if !is_hash_file_name(file_name) {
+                    continue;
+                }
+            }
+
             load_pem_certs(&path, out);
         }
     }

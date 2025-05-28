@@ -10,6 +10,11 @@ homepage = "https://github.com/rustls/rustls-native-certs"
 repository = "https://github.com/rustls/rustls-native-certs"
 categories = ["network-programming", "cryptography"]
 
+[features]
+default = []
+
+load-any-cert-in-dir = []
+
 [dependencies]
 pki-types = { package = "rustls-pki-types", version = "1.10", features = ["std"] }
 
